@@ -25,3 +25,5 @@ go.work.sum
 .env
 *.zip
 vosk-model*
+.env
+.ENV

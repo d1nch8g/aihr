@@ -1,0 +1,14 @@
+{
+  "modelUri": "gpt://b1g5ju6e4ke0kp5eqg27/yandexgpt/rc",
+  "completionOptions": { "maxTokens": 500, "temperature": 0.3 },
+  "messages": [
+    {
+      "role": "system",
+      "text": "Помоги решить задачу с собеседования на golang разработчика."
+    },
+    {
+      "role": "user",
+      "text": "Дано: два неупорядоченных среза.\nа) a := []int{37, 5, 1, 2} и b := []int{6, 2, 4, 37}.\nб) a = []int{1, 1, 1} и b = []int{1, 1, 1, 1}.\nВерните их пересечение."
+    }
+  ]
+}
