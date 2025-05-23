@@ -56,9 +56,9 @@ func main() {
 	}
 
 	// Print usage statistics
-	fmt.Printf("Usage: Input tokens: %d, Output tokens: %d, Total tokens: %d\n",
+	fmt.Printf("Usage: Input tokens: %s, Completion tokens: %s, Total tokens: %s\n",
 		resp.Result.Usage.InputTextTokens,
-		resp.Result.Usage.OutputTextTokens,
+		resp.Result.Usage.CompletionTokens,
 		resp.Result.Usage.TotalTokens)
 
 }

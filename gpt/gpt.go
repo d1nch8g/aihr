@@ -42,9 +42,12 @@ type Response struct {
 	Result struct {
 		Alternatives []Alternative `json:"alternatives"`
 		Usage        struct {
-			InputTextTokens  int `json:"inputTextTokens"`
-			OutputTextTokens int `json:"outputTextTokens"`
-			TotalTokens      int `json:"totalTokens"`
+			InputTextTokens         string `json:"inputTextTokens"`
+			CompletionTokens        string `json:"completionTokens"`
+			TotalTokens             string `json:"totalTokens"`
+			CompletionTokensDetails struct {
+				ReasoningTokens string `json:"reasoningTokens"`
+			} `json:"completionTokensDetails"`
 		} `json:"usage"`
 		ModelVersion string `json:"modelVersion"`
 	} `json:"result"`
