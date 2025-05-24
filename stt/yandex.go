@@ -14,7 +14,7 @@ import (
 	speechkit "github.com/yandex-cloud/go-genproto/yandex/cloud/ai/stt/v3"
 )
 
-type STTClient struct {
+type YandexSTTClient struct {
 	client   speechkit.RecognizerClient
 	conn     *grpc.ClientConn
 	iamToken string
@@ -22,14 +22,14 @@ type STTClient struct {
 	language string
 }
 
-type Config struct {
+type YandexConfig struct {
 	IamToken   string
 	FolderID   string
 	Language   string
 	SampleRate int32
 }
 
-func NewSTTClient(config Config) (*STTClient, error) {
+func NewYandexSTTClient(config YandexConfig) (*YandexSTTClient, error) {
 	tlsConfig := &tls.Config{}
 	conn, err := grpc.Dial("stt.api.cloud.yandex.net:443", grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	if err != nil {
@@ -38,7 +38,7 @@ func NewSTTClient(config Config) (*STTClient, error) {
 
 	client := speechkit.NewRecognizerClient(conn)
 
-	return &STTClient{
+	return &YandexSTTClient{
 		client:   client,
 		conn:     conn,
 		iamToken: config.IamToken,
@@ -47,11 +47,11 @@ func NewSTTClient(config Config) (*STTClient, error) {
 	}, nil
 }
 
-func (s *STTClient) Close() error {
+func (s *YandexSTTClient) Close() error {
 	return s.conn.Close()
 }
 
-func (s *STTClient) StreamRecognize(ctx context.Context, audioData <-chan []byte, results chan<- string, sampleRate int64) error {
+func (s *YandexSTTClient) StreamRecognize(ctx context.Context, audioData <-chan []byte, results chan<- string, sampleRate int64) error {
 	// Create metadata with authorization
 	md := metadata.Pairs(
 		"authorization", "Bearer "+s.iamToken,

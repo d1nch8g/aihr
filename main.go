@@ -58,14 +58,14 @@ func main() {
 	defer audioStreamer.Close()
 
 	// Initialize STT client
-	sttConfig := stt.Config{
+	sttConfig := stt.YandexConfig{
 		IamToken:   cfg.IamToken,
 		FolderID:   cfg.FolderID,
 		Language:   cfg.Audio.Language,
 		SampleRate: int32(cfg.Audio.SampleRate),
 	}
 
-	sttClient, err := stt.NewSTTClient(sttConfig)
+	sttClient, err := stt.NewYandexSTTClient(sttConfig)
 	if err != nil {
 		log.Fatalf("Failed to create STT client: %v", err)
 	}
