@@ -10,6 +10,7 @@ import (
 
 	"github.com/d1nch8g/aihr/audio"
 	"github.com/d1nch8g/aihr/config"
+	"github.com/d1nch8g/aihr/gpt"
 	"github.com/d1nch8g/aihr/stt"
 )
 
@@ -90,6 +91,8 @@ func main() {
 		}
 	}()
 
+	GPT := gpt.NewYandexGPTClient(cfg.FolderID, cfg.IamToken)
+
 	// Handle results and signals
 	for {
 		select {
@@ -103,7 +106,13 @@ func main() {
 			if !ok {
 				return
 			}
-			fmt.Printf("Recognized: %s\n", result)
+			reply, err := GPT.Complete("Ты HR проводящий собеседование на go разработчика", result)
+			if err != nil {
+				log.Printf("GPT error: %v", err)
+				continue
+			}
+
+			fmt.Printf("GPT: %s\n", reply)
 		case <-time.After(100 * time.Millisecond):
 			// Keep the main loop alive
 		}

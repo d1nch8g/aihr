@@ -118,11 +118,6 @@ func (s *YandexSTTClient) StreamRecognize(ctx context.Context, audioData <-chan 
 						results <- text
 					}
 				}
-			} else if resp.GetPartial() != nil {
-				// Optionally handle partial results
-				if text := resp.GetPartial().GetAlternatives(); text == nil {
-					log.Printf("Partial: %s", text)
-				}
 			}
 		}
 	}()
