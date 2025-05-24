@@ -16,9 +16,11 @@ type PortaudioPlayer struct {
 }
 
 func NewPortaudioPlayer(config PlayerConfig) *PortaudioPlayer {
+	// Buffer size should account for all channels
+	bufferSize := config.FramesPerBuffer * config.OutputChannels
 	return &PortaudioPlayer{
 		config:      config,
-		audioBuffer: make([]int16, config.FramesPerBuffer),
+		audioBuffer: make([]int16, bufferSize),
 	}
 }
 
@@ -27,7 +29,7 @@ func GetDefaultConfig() PlayerConfig {
 		SampleRate:      44100,
 		FramesPerBuffer: 1024,
 		InputChannels:   0,
-		OutputChannels:  1,
+		OutputChannels:  2, // Default to stereo
 	}
 }
 
@@ -66,22 +68,21 @@ func (p *PortaudioPlayer) StartPlayback(ctx context.Context, audioData <-chan []
 			return ctx.Err()
 		case audioBytes, ok := <-audioData:
 			if !ok {
-				return nil // Channel closed
+				return nil // Channel closed, playback complete
 			}
 
 			// Convert bytes to int16 samples
 			samples := p.convertBytesToSamples(audioBytes)
 
-			// Copy samples to buffer (pad or truncate as needed)
-			bufferLen := len(p.audioBuffer)
-			samplesLen := len(samples)
+			// Copy samples to buffer
+			expectedSamples := len(p.audioBuffer)
 
-			if samplesLen >= bufferLen {
-				copy(p.audioBuffer, samples[:bufferLen])
+			if len(samples) >= expectedSamples {
+				copy(p.audioBuffer, samples[:expectedSamples])
 			} else {
 				copy(p.audioBuffer, samples)
 				// Zero-fill remaining buffer
-				for i := samplesLen; i < bufferLen; i++ {
+				for i := len(samples); i < expectedSamples; i++ {
 					p.audioBuffer[i] = 0
 				}
 			}
@@ -90,9 +91,6 @@ func (p *PortaudioPlayer) StartPlayback(ctx context.Context, audioData <-chan []
 				log.Printf("Error writing audio: %v", err)
 				continue
 			}
-
-		default:
-			// Non-blocking check if no audio data available
 		}
 	}
 }
@@ -100,7 +98,6 @@ func (p *PortaudioPlayer) StartPlayback(ctx context.Context, audioData <-chan []
 func (p *PortaudioPlayer) convertBytesToSamples(audioBytes []byte) []int16 {
 	samples := make([]int16, len(audioBytes)/2)
 	for i := 0; i < len(samples); i++ {
-		// Convert little-endian bytes to int16
 		samples[i] = int16(binary.LittleEndian.Uint16(audioBytes[i*2 : i*2+2]))
 	}
 	return samples
