@@ -7,8 +7,17 @@ import (
 )
 
 type Config struct {
-	IamToken    string
-	GPTFolderID string
+	IamToken string
+	FolderID string
+	Audio    AudioConfig
+}
+
+type AudioConfig struct {
+	SampleRate      float64
+	FramesPerBuffer int
+	InputChannels   int
+	OutputChannels  int
+	Language        string
 }
 
 func LoadConfig() (*Config, error) {
@@ -17,8 +26,25 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// Set default audio config
+	audioConfig := AudioConfig{
+		SampleRate:      44100,
+		FramesPerBuffer: 1024,
+		InputChannels:   1,
+		OutputChannels:  0,
+		Language:        getEnvOrDefault("LANGUAGE", "en-US"),
+	}
+
 	return &Config{
-		IamToken:    os.Getenv("IAM_TOKEN"),
-		GPTFolderID: os.Getenv("GPT_FOLDER_ID"),
+		IamToken: os.Getenv("IAM_TOKEN"),
+		FolderID: os.Getenv("FOLDER_ID"),
+		Audio:    audioConfig,
 	}, nil
+}
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }

@@ -19,11 +19,19 @@ type STTClient struct {
 	conn     *grpc.ClientConn
 	iamToken string
 	folderID string
+	language string
 }
 
-func NewSTTClient(iamToken, folderID string) (*STTClient, error) {
-	config := &tls.Config{}
-	conn, err := grpc.Dial("stt.api.cloud.yandex.net:443", grpc.WithTransportCredentials(credentials.NewTLS(config)))
+type Config struct {
+	IamToken   string
+	FolderID   string
+	Language   string
+	SampleRate int32
+}
+
+func NewSTTClient(config Config) (*STTClient, error) {
+	tlsConfig := &tls.Config{}
+	conn, err := grpc.Dial("stt.api.cloud.yandex.net:443", grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to Yandex STT: %w", err)
 	}
@@ -33,8 +41,9 @@ func NewSTTClient(iamToken, folderID string) (*STTClient, error) {
 	return &STTClient{
 		client:   client,
 		conn:     conn,
-		iamToken: iamToken,
-		folderID: folderID,
+		iamToken: config.IamToken,
+		folderID: config.FolderID,
+		language: config.Language,
 	}, nil
 }
 
@@ -42,7 +51,7 @@ func (s *STTClient) Close() error {
 	return s.conn.Close()
 }
 
-func (s *STTClient) StreamRecognize(ctx context.Context, audioData <-chan []byte, results chan<- string) error {
+func (s *STTClient) StreamRecognize(ctx context.Context, audioData <-chan []byte, results chan<- string, sampleRate int64) error {
 	// Create metadata with authorization
 	md := metadata.Pairs(
 		"authorization", "Bearer "+s.iamToken,
@@ -66,7 +75,7 @@ func (s *STTClient) StreamRecognize(ctx context.Context, audioData <-chan []byte
 						AudioFormat: &speechkit.AudioFormatOptions_RawAudio{
 							RawAudio: &speechkit.RawAudio{
 								AudioEncoding:     speechkit.RawAudio_LINEAR16_PCM,
-								SampleRateHertz:   44100,
+								SampleRateHertz:   sampleRate,
 								AudioChannelCount: 1,
 							},
 						},
@@ -78,7 +87,7 @@ func (s *STTClient) StreamRecognize(ctx context.Context, audioData <-chan []byte
 					},
 					LanguageRestriction: &speechkit.LanguageRestrictionOptions{
 						RestrictionType: speechkit.LanguageRestrictionOptions_WHITELIST,
-						LanguageCode:    []string{"ru-RU"}, // or "ru-RU" for Russian
+						LanguageCode:    []string{s.language},
 					},
 					AudioProcessingType: speechkit.RecognitionModelOptions_REAL_TIME,
 				},
@@ -105,11 +114,15 @@ func (s *STTClient) StreamRecognize(ctx context.Context, audioData <-chan []byte
 
 			if resp.GetFinal() != nil {
 				for _, alternative := range resp.GetFinal().GetAlternatives() {
-					results <- alternative.GetText()
+					if text := alternative.GetText(); text != "" {
+						results <- text
+					}
 				}
 			} else if resp.GetPartial() != nil {
 				// Optionally handle partial results
-				log.Printf("Partial: %s", resp.GetPartial().GetAlternatives())
+				if text := resp.GetPartial().GetAlternatives(); text == nil {
+					log.Printf("Partial: %s", text)
+				}
 			}
 		}
 	}()

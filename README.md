@@ -21,53 +21,5 @@ Services:
 
 ## Setup
 
-1. Prepare speech to text model
-
-1.1. Download a model suitable for your needs from: https://alphacephei.com/vosk/models
-Medium russian model:
-
-```sh
-wget https://alphacephei.com/vosk/models/vosk-model-ru-0.42.zip
-unzip vosk-model-ru-0.42.zip
-```
-
-Medium english model:
-
-```sh
-wget https://alphacephei.com/vosk/models/vosk-model-en-us-0.42-gigaspeech.zip
-unzip vosk-model-en-us-0.42-gigaspeech.zip
-```
-
-Small english model:
-
-```sh
-wget https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
-unzip vosk-model-small-en-us-0.15.zip
-```
-
-1.2 Extract the archive and save model folder somewhere
-1.3 Run docker container with vosk API
-
-Russian model:
-
-```sh
-docker run -d -p 5001:5001 -v ./vosk-model-ru-0.42:/opt/vosk-model-ru/model alphacep/kaldi-grpc-en:latest
-```
-
-English model:
-
-```sh
-docker run -d -p 5001:5001 -v ./vosk-model-en-us-0.42-gigaspeech:/opt/vosk-model-en/model alphacep/kaldi-grpc-en:latest
-```
-
-Small english model:
-
-```sh
-docker run -d -p 5001:5001 -v ./vosk-model-small-en-us-0.15:/opt/vosk-model-en/model alphacep/kaldi-grpc-en:latest
-```
-
-1.4 Run golang program (first, it will list input audio devices to choose from):
-
-```
-go run main.go
-```
+1. Prepare yandex cloud IAM token and folder ID.
+2. 
