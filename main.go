@@ -3,109 +3,128 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
-	"os/signal"
 	"time"
 
-	"github.com/d1nch8g/aihr/audio"
-	"github.com/d1nch8g/aihr/config"
-	"github.com/d1nch8g/aihr/gpt"
-	"github.com/d1nch8g/aihr/stt"
+	"github.com/d1nch8g/aihr/sound"
+
+	"github.com/hajimehoshi/go-mp3"
 )
 
 func main() {
-	// Load configuration
-	cfg, err := config.LoadConfig()
+	// Initialize the audio player
+	config := sound.GetDefaultConfig()
+	player := sound.NewPortaudioPlayer(config)
+
+	if err := player.Initialize(); err != nil {
+		log.Fatalf("Failed to initialize PortAudio: %v", err)
+	}
+	defer player.Terminate()
+
+	if err := player.Open(); err != nil {
+		log.Fatalf("Failed to open audio stream: %v", err)
+	}
+	defer player.Close()
+
+	// Open and decode the MP3 file
+	audioData, err := loadMP3File("audio.mp3", int(config.SampleRate))
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatalf("Failed to load MP3 file: %v", err)
 	}
 
-	fmt.Printf("Starting speech recognition (Language: %s). Press Ctrl-C to stop.\n", cfg.Audio.Language)
+	// Create a channel to stream audio data
+	audioChannel := make(chan []byte, 10)
 
-	// Setup signal handling
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt)
+	// Create context for controlling playback
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize audio streamer
-	audioConfig := audio.PortaudioConfig{
-		SampleRate:      cfg.Audio.SampleRate,
-		FramesPerBuffer: cfg.Audio.FramesPerBuffer,
-		InputChannels:   cfg.Audio.InputChannels,
-		OutputChannels:  cfg.Audio.OutputChannels,
-	}
+	// Start playback in a goroutine
+	go func() {
+		if err := player.StartPlayback(ctx, audioChannel); err != nil {
+			log.Printf("Playback error: %v", err)
+		}
+	}()
 
-	audioStreamer := audio.NewPortaudioStreamer(audioConfig)
+	// Stream audio data
+	fmt.Println("Starting audio playback...")
+	go streamAudioData(audioChannel, audioData, config.FramesPerBuffer)
 
-	if err := audioStreamer.Initialize(); err != nil {
-		log.Fatalf("Failed to initialize PortAudio: %v", err)
-	}
-	defer audioStreamer.Terminate()
+	// Wait for playback to complete
+	duration := time.Duration(len(audioData)/2/int(config.SampleRate)) * time.Second
+	fmt.Printf("Playing audio for approximately %v...\n", duration)
 
-	if err := audioStreamer.Open(); err != nil {
-		log.Fatalf("Failed to open audio stream: %v", err)
-	}
-	defer audioStreamer.Close()
+	time.Sleep(duration + 2*time.Second) // Add extra time for buffer
 
-	// Initialize STT client
-	sttConfig := stt.YandexConfig{
-		IamToken:   cfg.IamToken,
-		FolderID:   cfg.FolderID,
-		Language:   cfg.Audio.Language,
-		SampleRate: int32(cfg.Audio.SampleRate),
-	}
+	// Stop playback
+	cancel()
+	close(audioChannel)
 
-	sttClient, err := stt.NewYandexSTTClient(sttConfig)
+	fmt.Println("Playback finished.")
+}
+
+func loadMP3File(filename string, targetSampleRate int) ([]byte, error) {
+	// Open the MP3 file
+	file, err := os.Open(filename)
 	if err != nil {
-		log.Fatalf("Failed to create STT client: %v", err)
+		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer sttClient.Close()
+	defer file.Close()
 
-	// Create channels for communication
-	audioData := make(chan []byte, 10)
-	results := make(chan string, 10)
+	// Create MP3 decoder
+	decoder, err := mp3.NewDecoder(file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create MP3 decoder: %w", err)
+	}
 
-	// Start STT recognition
-	go func() {
-		if err := sttClient.StreamRecognize(ctx, audioData, results, int64(cfg.Audio.SampleRate)); err != nil {
-			log.Printf("STT error: %v", err)
-		}
-	}()
+	fmt.Printf("MP3 Info - Sample Rate: %d Hz, Length: %d samples\n",
+		decoder.SampleRate(), decoder.Length())
 
-	// Start audio capture
-	go func() {
-		defer close(audioData)
-		if err := audioStreamer.StartCapture(ctx, audioData); err != nil && err != context.Canceled {
-			log.Printf("Audio capture error: %v", err)
-		}
-	}()
+	// Read all audio data
+	audioData := make([]byte, 0)
+	buffer := make([]byte, 4096)
 
-	GPT := gpt.NewYandexGPTClient(cfg.FolderID, cfg.IamToken)
-
-	// Handle results and signals
 	for {
-		select {
-		case <-sig:
-			fmt.Println("\nStopping...")
-			cancel()
-			// Give some time for graceful shutdown
-			time.Sleep(500 * time.Millisecond)
-			return
-		case result, ok := <-results:
-			if !ok {
-				return
-			}
-			reply, err := GPT.Complete("Ты HR проводящий собеседование на go разработчика", result)
-			if err != nil {
-				log.Printf("GPT error: %v", err)
-				continue
-			}
-
-			fmt.Printf("GPT: %s\n", reply)
-		case <-time.After(100 * time.Millisecond):
-			// Keep the main loop alive
+		n, err := decoder.Read(buffer)
+		if err == io.EOF {
+			break
 		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read MP3 data: %w", err)
+		}
+
+		audioData = append(audioData, buffer[:n]...)
+	}
+
+	// If sample rates don't match, you might need to resample
+	// For this example, we'll assume they match or are close enough
+	if decoder.SampleRate() != targetSampleRate {
+		fmt.Printf("Warning: MP3 sample rate (%d) doesn't match target (%d)\n",
+			decoder.SampleRate(), targetSampleRate)
+	}
+
+	return audioData, nil
+}
+
+func streamAudioData(audioChannel chan<- []byte, audioData []byte, framesPerBuffer int) {
+	// Calculate chunk size (frames * 2 bytes per sample * channels)
+	chunkSize := framesPerBuffer * 2 // 16-bit mono
+
+	for i := 0; i < len(audioData); i += chunkSize {
+		end := i + chunkSize
+		if end > len(audioData) {
+			end = len(audioData)
+			// Pad the last chunk if necessary
+			chunk := make([]byte, chunkSize)
+			copy(chunk, audioData[i:end])
+			audioChannel <- chunk
+		} else {
+			audioChannel <- audioData[i:end]
+		}
+
+		// Add small delay to simulate real-time streaming
+		time.Sleep(time.Duration(framesPerBuffer*1000/44100) * time.Millisecond)
 	}
 }

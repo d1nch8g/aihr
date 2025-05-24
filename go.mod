@@ -4,6 +4,7 @@ go 1.24.3
 
 require (
 	github.com/gordonklaus/portaudio v0.0.0-20250206071425-98a94950218b
+	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/joho/godotenv v1.5.1
 	github.com/yandex-cloud/go-genproto v0.5.0
 	google.golang.org/grpc v1.72.1
