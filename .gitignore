@@ -27,3 +27,5 @@ go.work.sum
 vosk-model*
 .env
 .ENV
+*.aiff
+*.mp3

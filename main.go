@@ -1,64 +1,122 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"time"
 
-	"github.com/d1nch8g/aihr/config"
-	"github.com/d1nch8g/aihr/gpt"
+	"github.com/d1nch8g/aihr/stt"
+	"github.com/gordonklaus/portaudio"
 )
 
-type Client struct {
-	FolderID string
-	IAMToken string
-}
-
 func main() {
-	cfg, err := config.LoadConfig()
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: go run main_stt.go <iam_token> <folder_id>")
+		return
+	}
+
+	iamToken := os.Args[1]
+	folderID := os.Args[2]
+
+	fmt.Println("Starting speech recognition. Press Ctrl-C to stop.")
+
+	// Setup signal handling
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Initialize STT client
+	sttClient, err := stt.NewSTTClient(iamToken, folderID)
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatalf("Failed to create STT client: %v", err)
 	}
+	defer sttClient.Close()
 
-	// Create a client with credentials
-	client := gpt.NewClient(cfg.GPTFolderID, cfg.IamToken)
+	// Initialize PortAudio
+	portaudio.Initialize()
+	defer portaudio.Terminate()
 
-	// Create the request
-	req := gpt.Request{
-		ModelURI: "gpt://b1g5ju6e4ke0kp5eqg27/yandexgpt/rc",
-		CompletionOptions: gpt.CompletionOptions{
-			MaxTokens:   500,
-			Temperature: 0.3,
-		},
-		Messages: []gpt.Message{
-			{
-				Role: "system",
-				Text: "Ты помогаешь решить вопрос с собеседования по программированию на языке Go.",
-			},
-			{
-				Role: "user",
-				Text: "Дано: два неупорядоченных среза.\nа) a := []int{37, 5, 1, 2} и b := []int{6, 2, 4, 37}.\nб) a = []int{1, 1, 1} и b = []int{1, 1, 1, 1}.\nВерните их пересечение.",
-			},
-		},
-	}
+	// Setup audio stream
+	const sampleRate = 44100
+	const framesPerBuffer = 1024
+	audioBuffer := make([]int32, framesPerBuffer)
 
-	// Send the request
-	resp, err := client.Complete(req)
+	stream, err := portaudio.OpenDefaultStream(1, 0, sampleRate, framesPerBuffer, audioBuffer)
 	if err != nil {
-		log.Fatalf("Failed to complete request: %v", err)
+		log.Fatalf("Failed to open audio stream: %v", err)
 	}
+	defer stream.Close()
 
-	// Print the response
-	if len(resp.Result.Alternatives) > 0 {
-		fmt.Println("Response:")
-		fmt.Println(resp.Result.Alternatives[0].Message.Text)
-	} else {
-		fmt.Println("No response alternatives received")
+	// Create channels for communication
+	audioData := make(chan []byte, 10)
+	results := make(chan string, 10)
+
+	// Start STT recognition
+	go func() {
+		if err := sttClient.StreamRecognize(ctx, audioData, results); err != nil {
+			log.Printf("STT error: %v", err)
+		}
+	}()
+
+	// Start audio capture
+	go func() {
+		defer close(audioData)
+
+		if err := stream.Start(); err != nil {
+			log.Printf("Failed to start stream: %v", err)
+			return
+		}
+		defer stream.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if err := stream.Read(); err != nil {
+					log.Printf("Error reading audio: %v", err)
+					continue
+				}
+
+				// Convert int32 samples to bytes (16-bit PCM)
+				var buf bytes.Buffer
+				for _, sample := range audioBuffer {
+					// Convert 32-bit to 16-bit
+					sample16 := int16(sample >> 16)
+					binary.Write(&buf, binary.LittleEndian, sample16)
+				}
+
+				select {
+				case audioData <- buf.Bytes():
+				case <-ctx.Done():
+					return
+				default:
+					// Drop audio if channel is full
+				}
+			}
+		}
+	}()
+
+	// Handle results and signals
+	for {
+		select {
+		case <-sig:
+			fmt.Println("\nStopping...")
+			cancel()
+			return
+		case result, ok := <-results:
+			if !ok {
+				return
+			}
+			fmt.Printf("Recognized: %s\n", result)
+		case <-time.After(100 * time.Millisecond):
+			// Keep the main loop alive
+		}
 	}
-
-	// Print usage statistics
-	fmt.Printf("Usage: Input tokens: %s, Completion tokens: %s, Total tokens: %s\n",
-		resp.Result.Usage.InputTextTokens,
-		resp.Result.Usage.CompletionTokens,
-		resp.Result.Usage.TotalTokens)
-
 }
