@@ -10,35 +10,35 @@ import (
 	"github.com/gordonklaus/portaudio"
 )
 
-type Config struct {
+type PortaudioConfig struct {
 	SampleRate      float64
 	FramesPerBuffer int
 	InputChannels   int
 	OutputChannels  int
 }
 
-type AudioStreamer struct {
+type PortaudioStreamer struct {
 	stream      *portaudio.Stream
 	audioBuffer []int32
-	config      Config
+	config      PortaudioConfig
 }
 
-func NewAudioStreamer(config Config) *AudioStreamer {
-	return &AudioStreamer{
+func NewPortaudioStreamer(config PortaudioConfig) *PortaudioStreamer {
+	return &PortaudioStreamer{
 		config:      config,
 		audioBuffer: make([]int32, config.FramesPerBuffer),
 	}
 }
 
-func (a *AudioStreamer) Initialize() error {
+func (a *PortaudioStreamer) Initialize() error {
 	return portaudio.Initialize()
 }
 
-func (a *AudioStreamer) Terminate() {
+func (a *PortaudioStreamer) Terminate() {
 	portaudio.Terminate()
 }
 
-func (a *AudioStreamer) Open() error {
+func (a *PortaudioStreamer) Open() error {
 	stream, err := portaudio.OpenDefaultStream(
 		a.config.InputChannels,
 		a.config.OutputChannels,
@@ -53,14 +53,14 @@ func (a *AudioStreamer) Open() error {
 	return nil
 }
 
-func (a *AudioStreamer) Close() error {
+func (a *PortaudioStreamer) Close() error {
 	if a.stream != nil {
 		return a.stream.Close()
 	}
 	return nil
 }
 
-func (a *AudioStreamer) StartCapture(ctx context.Context, audioData chan<- []byte) error {
+func (a *PortaudioStreamer) StartCapture(ctx context.Context, audioData chan<- []byte) error {
 	if a.stream == nil {
 		return errors.New("Stream not opened")
 	}
@@ -94,7 +94,7 @@ func (a *AudioStreamer) StartCapture(ctx context.Context, audioData chan<- []byt
 	}
 }
 
-func (a *AudioStreamer) convertToBytes() []byte {
+func (a *PortaudioStreamer) convertToBytes() []byte {
 	var buf bytes.Buffer
 	for _, sample := range a.audioBuffer {
 		// Convert 32-bit to 16-bit
@@ -104,8 +104,8 @@ func (a *AudioStreamer) convertToBytes() []byte {
 	return buf.Bytes()
 }
 
-func GetDefaultConfig() Config {
-	return Config{
+func GetDefaultConfig() PortaudioConfig {
+	return PortaudioConfig{
 		SampleRate:      44100,
 		FramesPerBuffer: 1024,
 		InputChannels:   1,

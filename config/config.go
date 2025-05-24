@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -33,6 +34,10 @@ func LoadConfig() (*Config, error) {
 		InputChannels:   1,
 		OutputChannels:  0,
 		Language:        getEnvOrDefault("LANGUAGE", "en-US"),
+	}
+
+	if os.Getenv("IAM_TOKEN") == "" || os.Getenv("FOLDER_ID") == "" {
+		return nil, fmt.Errorf("IAM_TOKEN and FOLDER_ID must be set in .env file")
 	}
 
 	return &Config{

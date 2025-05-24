@@ -21,15 +21,6 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	if cfg.IamToken == "" || cfg.FolderID == "" {
-		fmt.Println("Error: IAM_TOKEN and FOLDER_ID must be set in .env file")
-		fmt.Println("Create a .env file with:")
-		fmt.Println("IAM_TOKEN=your_iam_token")
-		fmt.Println("FOLDER_ID=your_folder_id")
-		fmt.Println("LANGUAGE=en-US  # or ru-RU")
-		return
-	}
-
 	fmt.Printf("Starting speech recognition (Language: %s). Press Ctrl-C to stop.\n", cfg.Audio.Language)
 
 	// Setup signal handling
@@ -39,14 +30,14 @@ func main() {
 	defer cancel()
 
 	// Initialize audio streamer
-	audioConfig := audio.Config{
+	audioConfig := audio.PortaudioConfig{
 		SampleRate:      cfg.Audio.SampleRate,
 		FramesPerBuffer: cfg.Audio.FramesPerBuffer,
 		InputChannels:   cfg.Audio.InputChannels,
 		OutputChannels:  cfg.Audio.OutputChannels,
 	}
 
-	audioStreamer := audio.NewAudioStreamer(audioConfig)
+	audioStreamer := audio.NewPortaudioStreamer(audioConfig)
 
 	if err := audioStreamer.Initialize(); err != nil {
 		log.Fatalf("Failed to initialize PortAudio: %v", err)
