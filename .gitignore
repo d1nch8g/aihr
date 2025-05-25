@@ -30,6 +30,6 @@ vosk-model*
 *.aiff
 *.mp3
 *.wav
-*.gox
+*.gos
 vendor/**
 

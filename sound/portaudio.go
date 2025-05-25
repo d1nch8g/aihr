@@ -9,6 +9,14 @@ import (
 	"github.com/gordonklaus/portaudio"
 )
 
+// PlayerConfig represents the configuration for audio playback
+type PlayerConfig struct {
+	SampleRate      float64
+	FramesPerBuffer int
+	InputChannels   int
+	OutputChannels  int
+}
+
 type PortaudioPlayer struct {
 	stream      *portaudio.Stream
 	audioBuffer []int16
@@ -52,7 +60,7 @@ func (p *PortaudioPlayer) Open() error {
 	return nil
 }
 
-func (p *PortaudioPlayer) StartPlayback(ctx context.Context, audioData <-chan []byte) error {
+func (p *PortaudioPlayer) PlayStream(ctx context.Context, audioData <-chan []byte) error {
 	if p.stream == nil {
 		return errors.New("Stream not opened")
 	}

@@ -1,0 +1,180 @@
+// tts and play audio
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/d1nch8g/aihr/sound"
+	"github.com/d1nch8g/aihr/tts"
+)
+
+func main() {
+	// Get API key and folder ID from environment variables
+	apiKey := os.Getenv("YANDEX_API_KEY")
+	folderID := os.Getenv("YANDEX_FOLDER_ID")
+
+	if apiKey == "" || folderID == "" {
+		log.Fatal("Please set YANDEX_API_KEY and YANDEX_FOLDER_ID environment variables")
+	}
+
+	// Create Yandex TTS client
+	config := tts.YandexConfig{
+		ApiKey:   apiKey,
+		FolderID: folderID,
+	}
+
+	client, err := tts.NewYandexTTSClient(config)
+	if err != nil {
+		log.Fatalf("Failed to create TTS client: %v", err)
+	}
+	defer client.Close()
+
+	// Configure audio player - Yandex TTS typically outputs at 48000 Hz
+	playerConfig := sound.PlayerConfig{
+		SampleRate:      22050.0, // Changed from 22050 to 48000
+		FramesPerBuffer: 2048,    // Increased buffer size for better stability
+		InputChannels:   0,
+		OutputChannels:  1, // Changed to mono since TTS is typically mono
+	}
+
+	player := sound.NewPortaudioPlayer(playerConfig)
+
+	if err := player.Initialize(); err != nil {
+		log.Fatalf("Failed to initialize PortAudio: %v", err)
+	}
+	defer player.Terminate()
+
+	if err := player.Open(); err != nil {
+		log.Fatalf("Failed to open audio stream: %v", err)
+	}
+	defer player.Close()
+
+	// Text to synthesize
+	text := "Hello! Welcome to the AI-HR interview system. I will be conducting your interview today. Please introduce yourself and tell me about your experience."
+
+	// Get default synthesis options and customize if needed
+	options := tts.GetDefaultSynthesisOptions()
+	options.Voice = "marina"
+	options.Speed = 1.0
+	options.Volume = 0.0
+
+	// Create context with timeout for TTS
+	ttsCtx, ttsCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer ttsCancel()
+
+	// Create context for playback control
+	playCtx, playCancel := context.WithCancel(context.Background())
+	defer playCancel()
+
+	// Handle interrupts gracefully
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		fmt.Println("\nStopping synthesis and playback...")
+		ttsCancel()
+		playCancel()
+	}()
+
+	// Create channels for audio data flow
+	ttsAudioData := make(chan []byte, 100)
+	playbackAudioData := make(chan []byte, 10)
+
+	fmt.Printf("Synthesizing and playing text: %s\n", text)
+	fmt.Printf("Audio config: Sample Rate: %.0f Hz, Channels: %d, Buffer: %d frames\n",
+		playerConfig.SampleRate, playerConfig.OutputChannels, playerConfig.FramesPerBuffer)
+
+	// Start TTS synthesis in a goroutine
+	synthesisComplete := make(chan error, 1)
+	go func() {
+		synthesisComplete <- client.SynthesizeToStreamWithContext(ttsCtx, text, options, ttsAudioData)
+	}()
+
+	// Start audio playback in a goroutine
+	playbackComplete := make(chan error, 1)
+	go func() {
+		playbackComplete <- player.StartPlayback(playCtx, playbackAudioData)
+	}()
+
+	// Process and stream audio data from TTS to playback
+	go func() {
+		defer close(playbackAudioData)
+
+		var audioBuffer []byte
+		// Calculate chunk size for mono 16-bit audio
+		chunkSize := playerConfig.FramesPerBuffer * 2 * playerConfig.OutputChannels // 16-bit samples
+
+		fmt.Printf("Using chunk size: %d bytes\n", chunkSize)
+
+		for {
+			select {
+			case chunk, ok := <-ttsAudioData:
+				if !ok {
+					// TTS finished, flush remaining buffer
+					if len(audioBuffer) > 0 {
+						// Pad the last chunk if necessary
+						if len(audioBuffer) < chunkSize {
+							padded := make([]byte, chunkSize)
+							copy(padded, audioBuffer)
+							audioBuffer = padded
+						}
+
+						select {
+						case playbackAudioData <- audioBuffer:
+						case <-playCtx.Done():
+							return
+						}
+					}
+					return
+				}
+
+				// Add chunk to buffer
+				audioBuffer = append(audioBuffer, chunk...)
+
+				// Send complete chunks to playback
+				for len(audioBuffer) >= chunkSize {
+					select {
+					case playbackAudioData <- audioBuffer[:chunkSize]:
+						audioBuffer = audioBuffer[chunkSize:]
+					case <-playCtx.Done():
+						return
+					}
+				}
+
+			case <-playCtx.Done():
+				return
+			}
+		}
+	}()
+
+	// Wait for synthesis to complete
+	select {
+	case err := <-synthesisComplete:
+		if err != nil && err != context.Canceled {
+			log.Printf("Synthesis error: %v", err)
+			return
+		}
+		fmt.Println("Synthesis completed successfully!")
+	case <-ttsCtx.Done():
+		fmt.Println("Synthesis timed out or cancelled")
+		return
+	}
+
+	// Wait for playback to complete
+	select {
+	case err := <-playbackComplete:
+		if err != nil && err != context.Canceled {
+			log.Printf("Playback error: %v", err)
+		}
+	case <-playCtx.Done():
+		// Context cancelled
+	}
+
+	fmt.Println("Text-to-speech playback finished.")
+}
