@@ -29,4 +29,7 @@ vosk-model*
 .ENV
 *.aiff
 *.mp3
+*.wav
 *.gox
+vendor/**
+
