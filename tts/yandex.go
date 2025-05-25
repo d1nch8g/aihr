@@ -18,7 +18,7 @@ const (
 )
 
 type YandexConfig struct {
-	ApiKey   string
+	IamToken string
 	FolderID string
 }
 
@@ -59,7 +59,7 @@ func NewYandexTTSClient(config YandexConfig) (*YandexTTSClient, error) {
 	return &YandexTTSClient{
 		client:   client,
 		conn:     conn,
-		apiKey:   config.ApiKey,
+		apiKey:   config.IamToken,
 		folderID: config.FolderID,
 	}, nil
 }

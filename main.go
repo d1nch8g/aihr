@@ -1,3 +1,4 @@
+// Unified AI-HR interview system with STT, GPT, and TTS
 package main
 
 import (
@@ -11,113 +12,64 @@ import (
 
 	"github.com/d1nch8g/aihr/audio"
 	"github.com/d1nch8g/aihr/config"
-	"github.com/d1nch8g/aihr/engine"
 	"github.com/d1nch8g/aihr/gpt"
 	"github.com/d1nch8g/aihr/sound"
 	"github.com/d1nch8g/aihr/stt"
 	"github.com/d1nch8g/aihr/tts"
 )
 
-const (
-	defaultSystemPrompt = `You are an experienced HR professional conducting a technical interview for a Go developer position. 
-Your role is to:
-- Ask relevant technical questions about Go programming
-- Evaluate the candidate's experience and skills
-- Provide constructive feedback
-- Keep the conversation professional and engaging
-- Ask follow-up questions based on the candidate's responses
-
-Please keep your responses concise and conversational. Start by asking the candidate to introduce themselves.`
-)
-
 func main() {
-	fmt.Println("Starting AI-HR Interview System...")
-
 	// Load configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Setup signal handling for graceful shutdown
+	fmt.Printf("Starting AI-HR interview system (Language: %s). Press Ctrl-C to stop.\n", cfg.Audio.Language)
+
+	// Setup signal handling
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		fmt.Println("\nShutting down AI-HR system...")
-		cancel()
-	}()
-
-	// Initialize all components
-	audioStreamer, sttClient, gptClient, ttsClient, soundPlayer, err := initializeComponents(cfg)
-	if err != nil {
-		log.Fatalf("Failed to initialize components: %v", err)
-	}
-
-	// Create engine configuration
-	engineConfig := engine.EngineConfig{
-		SystemPrompt:   defaultSystemPrompt,
-		MaxHistorySize: 10,
-		SampleRate:     int64(cfg.Audio.SampleRate),
-		SilenceTimeout: 3 * time.Second,
-	}
-
-	// Create the AI-HR engine
-	aiEngine := engine.NewEngine(
-		engineConfig,
-		audioStreamer,
-		sttClient,
-		gptClient,
-		ttsClient,
-		soundPlayer,
-	)
-
-	// Start the interview with a welcome message
-	if err := playWelcomeMessage(ctx, ttsClient, soundPlayer); err != nil {
-		log.Printf("Failed to play welcome message: %v", err)
-	}
-
-	fmt.Printf("AI-HR Interview System ready (Language: %s)\n", cfg.Audio.Language)
-	fmt.Println("The AI interviewer will now start the conversation...")
-	fmt.Println("Press Ctrl+C to stop the interview at any time.")
-
-	// Start the engine
-	if err := aiEngine.Start(ctx); err != nil && err != context.Canceled {
-		log.Printf("Engine error: %v", err)
-	}
-
-	// Graceful shutdown
-	fmt.Println("Stopping AI-HR engine...")
-	if err := aiEngine.Stop(); err != nil {
-		log.Printf("Error during engine shutdown: %v", err)
-	}
-
-	// Display conversation summary
-	displayConversationSummary(aiEngine)
-
-	fmt.Println("AI-HR Interview System stopped. Thank you!")
-}
-
-// initializeComponents initializes all the required components for the AI-HR system
-func initializeComponents(cfg *config.Config) (
-	audio.AudioStreamer,
-	stt.STTClient,
-	gpt.GPTClient,
-	tts.Synthesizer,
-	sound.Player,
-	error,
-) {
-	// Initialize audio streamer for input
+	// Initialize audio streamer for recording
 	audioConfig := audio.PortaudioConfig{
 		SampleRate:      cfg.Audio.SampleRate,
 		FramesPerBuffer: cfg.Audio.FramesPerBuffer,
 		InputChannels:   cfg.Audio.InputChannels,
-		OutputChannels:  0, // Input only
+		OutputChannels:  cfg.Audio.OutputChannels,
 	}
+
 	audioStreamer := audio.NewPortaudioStreamer(audioConfig)
+	if err := audioStreamer.Initialize(); err != nil {
+		log.Fatalf("Failed to initialize PortAudio for recording: %v", err)
+	}
+	defer audioStreamer.Terminate()
+
+	if err := audioStreamer.Open(); err != nil {
+		log.Fatalf("Failed to open audio stream for recording: %v", err)
+	}
+	defer audioStreamer.Close()
+
+	// Initialize audio player for TTS playback
+	playerConfig := sound.PlayerConfig{
+		SampleRate:      22050.0,
+		FramesPerBuffer: 2048,
+		InputChannels:   0,
+		OutputChannels:  1,
+	}
+
+	player := sound.NewPortaudioPlayer(playerConfig)
+	if err := player.Initialize(); err != nil {
+		log.Fatalf("Failed to initialize PortAudio for playback: %v", err)
+	}
+	defer player.Terminate()
+
+	if err := player.Open(); err != nil {
+		log.Fatalf("Failed to open audio stream for playback: %v", err)
+	}
+	defer player.Close()
 
 	// Initialize STT client
 	sttConfig := stt.YandexConfig{
@@ -126,98 +78,173 @@ func initializeComponents(cfg *config.Config) (
 		Language:   cfg.Audio.Language,
 		SampleRate: int32(cfg.Audio.SampleRate),
 	}
+
 	sttClient, err := stt.NewYandexSTTClient(sttConfig)
 	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("failed to create STT client: %w", err)
+		log.Fatalf("Failed to create STT client: %v", err)
 	}
+	defer sttClient.Close()
+
+	// Initialize TTS client
+	ttsConfig := tts.YandexConfig{
+		IamToken: cfg.IamToken,
+		FolderID: cfg.FolderID,
+	}
+
+	ttsClient, err := tts.NewYandexTTSClient(ttsConfig)
+	if err != nil {
+		log.Fatalf("Failed to create TTS client: %v", err)
+	}
+	defer ttsClient.Close()
 
 	// Initialize GPT client
 	gptClient := gpt.NewYandexGPTClient(cfg.FolderID, cfg.IamToken)
 
-	// Initialize TTS client
-	ttsConfig := tts.YandexConfig{
-		ApiKey:   cfg.IamToken, // Using IAM token as API key for Yandex
-		FolderID: cfg.FolderID,
-	}
-	ttsClient, err := tts.NewYandexTTSClient(ttsConfig)
-	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("failed to create TTS client: %w", err)
+	// Create channels for communication
+	audioData := make(chan []byte, 10)
+	sttResults := make(chan string, 10)
+	gptResponses := make(chan string, 10)
+
+	// Start STT recognition
+	go func() {
+		if err := sttClient.StreamRecognize(ctx, audioData, sttResults, int64(cfg.Audio.SampleRate)); err != nil {
+			log.Printf("STT error: %v", err)
+		}
+	}()
+
+	// Start audio capture
+	go func() {
+		defer close(audioData)
+		if err := audioStreamer.StartCapture(ctx, audioData); err != nil && err != context.Canceled {
+			log.Printf("Audio capture error: %v", err)
+		}
+	}()
+
+	// Process STT results with GPT
+	go func() {
+		defer close(gptResponses)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case result, ok := <-sttResults:
+				if !ok {
+					return
+				}
+
+				fmt.Printf("User: %s\n", result)
+
+				reply, err := gptClient.Complete("Ты HR проводящий собеседование на go разработчика", result)
+				if err != nil {
+					log.Printf("GPT error: %v", err)
+					continue
+				}
+
+				fmt.Printf("GPT: %s\n", reply)
+
+				select {
+				case gptResponses <- reply:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	// Process GPT responses with TTS and play them
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case response, ok := <-gptResponses:
+				if !ok {
+					return
+				}
+
+				// Play the GPT response using TTS
+				if err := playTTSResponse(ctx, ttsClient, player, response, playerConfig); err != nil {
+					log.Printf("TTS playback error: %v", err)
+				}
+			}
+		}
+	}()
+
+	// Play welcome message
+	welcomeMsg := "Hello! Welcome to the AI-HR interview system. I will be conducting your interview today. Please introduce yourself and tell me about your experience with Go development."
+	fmt.Printf("AI-HR: %s\n", welcomeMsg)
+	if err := playTTSResponse(ctx, ttsClient, player, welcomeMsg, playerConfig); err != nil {
+		log.Printf("Welcome message TTS error: %v", err)
 	}
 
-	// Initialize sound player for output
-	playerConfig := sound.PlayerConfig{
-		SampleRate:      22050.0, // Yandex TTS output rate
-		FramesPerBuffer: 2048,
-		InputChannels:   0,
-		OutputChannels:  1, // Mono output
+	// Main loop - handle signals
+	for {
+		select {
+		case <-sig:
+			fmt.Println("\nStopping AI-HR interview system...")
+			cancel()
+			// Give some time for graceful shutdown
+			time.Sleep(1 * time.Second)
+			return
+		case <-ctx.Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+			// Keep the main loop alive
+		}
 	}
-	soundPlayer := sound.NewPortaudioPlayer(playerConfig)
-
-	return audioStreamer, sttClient, gptClient, ttsClient, soundPlayer, nil
 }
 
-// playWelcomeMessage plays an initial welcome message to start the interview
-func playWelcomeMessage(ctx context.Context, ttsClient tts.Synthesizer, soundPlayer sound.Player) error {
-	welcomeText := "Hello! Welcome to the AI-HR interview system. I will be conducting your technical interview for the Go developer position today. Please introduce yourself and tell me about your programming experience."
-
-	// Initialize sound player
-	if err := soundPlayer.Initialize(); err != nil {
-		return fmt.Errorf("failed to initialize sound player: %w", err)
-	}
-	defer soundPlayer.Terminate()
-
-	if err := soundPlayer.Initialize(); err != nil {
-		return fmt.Errorf("failed to open sound player: %w", err)
-	}
-	defer soundPlayer.Terminate()
-
-	// Create channels for audio streaming
-	ttsAudioData := make(chan []byte, 100)
-	playbackAudioData := make(chan []byte, 10)
-
-	// TTS synthesis options
+// playTTSResponse synthesizes text to speech and plays it back
+func playTTSResponse(ctx context.Context, ttsClient *tts.YandexTTSClient, player *sound.PortaudioPlayer, text string, playerConfig sound.PlayerConfig) error {
+	// Get default synthesis options
 	options := tts.GetDefaultSynthesisOptions()
 	options.Voice = "marina"
 	options.Speed = 1.0
 	options.Volume = 0.0
 
-	// Create contexts
+	// Create context with timeout for TTS
 	ttsCtx, ttsCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer ttsCancel()
 
+	// Create context for playback control
 	playCtx, playCancel := context.WithCancel(ctx)
 	defer playCancel()
+
+	// Create channels for audio data flow
+	ttsAudioData := make(chan []byte, 100)
+	playbackAudioData := make(chan []byte, 10)
 
 	// Start TTS synthesis
 	synthesisComplete := make(chan error, 1)
 	go func() {
-		synthesisComplete <- ttsClient.SynthesizeToStreamWithContext(ttsCtx, welcomeText, options, ttsAudioData)
+		synthesisComplete <- ttsClient.SynthesizeToStreamWithContext(ttsCtx, text, options, ttsAudioData)
 	}()
 
-	// Start playback
+	// Start audio playback
 	playbackComplete := make(chan error, 1)
 	go func() {
-		playbackComplete <- soundPlayer.PlayStream(playCtx, playbackAudioData)
+		playbackComplete <- player.PlayStream(playCtx, playbackAudioData)
 	}()
 
-	// Stream audio from TTS to playback
+	// Process and stream audio data from TTS to playback
 	go func() {
 		defer close(playbackAudioData)
 
-		chunkSize := 2048 * 2 // 16-bit mono samples
 		var audioBuffer []byte
+		chunkSize := playerConfig.FramesPerBuffer * 2 * playerConfig.OutputChannels
 
 		for {
 			select {
 			case chunk, ok := <-ttsAudioData:
 				if !ok {
-					// Flush remaining buffer
+					// TTS finished, flush remaining buffer
 					if len(audioBuffer) > 0 {
 						if len(audioBuffer) < chunkSize {
 							padded := make([]byte, chunkSize)
 							copy(padded, audioBuffer)
 							audioBuffer = padded
 						}
+
 						select {
 						case playbackAudioData <- audioBuffer:
 						case <-playCtx.Done():
@@ -227,9 +254,10 @@ func playWelcomeMessage(ctx context.Context, ttsClient tts.Synthesizer, soundPla
 					return
 				}
 
+				// Add chunk to buffer
 				audioBuffer = append(audioBuffer, chunk...)
 
-				// Send complete chunks
+				// Send complete chunks to playback
 				for len(audioBuffer) >= chunkSize {
 					select {
 					case playbackAudioData <- audioBuffer[:chunkSize]:
@@ -249,48 +277,21 @@ func playWelcomeMessage(ctx context.Context, ttsClient tts.Synthesizer, soundPla
 	select {
 	case err := <-synthesisComplete:
 		if err != nil && err != context.Canceled {
-			return fmt.Errorf("synthesis error: %w", err)
+			return fmt.Errorf("synthesis error: %v", err)
 		}
 	case <-ttsCtx.Done():
-		return fmt.Errorf("synthesis timed out")
+		return fmt.Errorf("synthesis timed out or cancelled")
 	}
 
 	// Wait for playback to complete
 	select {
 	case err := <-playbackComplete:
 		if err != nil && err != context.Canceled {
-			return fmt.Errorf("playback error: %w", err)
+			return fmt.Errorf("playback error: %v", err)
 		}
 	case <-playCtx.Done():
 		// Context cancelled
 	}
 
-	fmt.Println("Welcome message played successfully!")
 	return nil
-}
-
-// displayConversationSummary shows a summary of the interview conversation
-func displayConversationSummary(aiEngine *engine.Engine) {
-	history := aiEngine.GetHistory()
-
-	if len(history) == 0 {
-		fmt.Println("No conversation history to display.")
-		return
-	}
-
-	fmt.Println("\n" + "====")
-	fmt.Println("INTERVIEW CONVERSATION SUMMARY")
-	fmt.Println("====")
-
-	for i, entry := range history {
-		fmt.Printf("\n--- Exchange %d [%s] ---\n", i+1, entry.Timestamp.Format("15:04:05"))
-		fmt.Printf("Candidate: %s\n", entry.UserInput)
-		fmt.Printf("Interviewer: %s\n", entry.AIResponse)
-	}
-
-	fmt.Println("\n" + "====")
-	fmt.Printf("Total exchanges: %d\n", len(history))
-	fmt.Printf("Interview duration: %s\n",
-		history[len(history)-1].Timestamp.Sub(history[0].Timestamp).Round(time.Second))
-	fmt.Println("====")
 }
